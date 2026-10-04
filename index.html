@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Garage sale</title>
+<meta property="og:title" content="Garage sale">
+<meta property="og:description" content="Browse the items, see what is still available and reserve online.">
+<script>
+/* ------------------------------------------------------------------
+   The only thing to edit in this file.
+   API_URL: the web app URL from Apps Script (ends in /exec).
+            Leave it empty and the page runs in demo mode.
+   ------------------------------------------------------------------ */
+const CONFIG = {
+  API_URL: "https://script.google.com/macros/s/AKfycbzYvkt6UunAA0cAd5eVNVZL-PKVAoyuYinaWb_Ej8S4wyU0DE-GUpCnAu_IRX-0Rs8Z/exec",
+  PHOTO_DIR: "photos/",
+  THUMB_DIR: "photos/thumbs/",
+  POLL_SECONDS: 45
+};
+</script>
+<style>
+:root {
+  --bg: #f6f3ee; --surface: #ffffff; --ink: #1c1b19; --muted: #6a655d; --line: #e3ded5;
+  --accent: #0b6e5f; --accent-ink: #ffffff; --accent-soft: #dff3ec;
+  --reserved: #7a4f00; --reserved-soft: #fdecc4;
+  --sold: #55524d; --sold-soft: #e7e4df;
+  --danger: #a3261b; --danger-soft: #fbe3df;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(28,27,25,.06), 0 6px 18px rgba(28,27,25,.06);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141311; --surface: #1e1d1a; --ink: #f2efe9; --muted: #a9a398; --line: #34322d;
+    --accent: #58c7b2; --accent-ink: #0b211d; --accent-soft: #17332d;
+    --reserved: #f3c764; --reserved-soft: #3a2e12;
+    --sold: #b5b0a6; --sold-soft: #2c2b27;
+    --danger: #ff9d91; --danger-soft: #3d1b17;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 18px rgba(0,0,0,.3);
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+[hidden] { display: none !important; }
+button, input, select, textarea { font: inherit; color: inherit; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-inline: 16px; }
+
+/* Header */
+.top { padding-block: 28px 14px; }
+.top h1 {
+  margin: 0 0 8px; font: 700 clamp(1.9rem, 5vw, 2.8rem)/1.1 "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  letter-spacing: -0.01em; text-wrap: balance;
+}
+.top p { margin: 0 0 6px; max-width: 62ch; white-space: pre-line; }
+.top .pickup { color: var(--muted); }
+.notice {
+  margin-top: 12px; padding: 10px 14px; border-radius: 10px; font-weight: 600;
+  background: var(--reserved-soft); color: var(--reserved);
+}
+.notice.demo { background: var(--accent-soft); color: var(--accent); }
+
+/* Toolbar */
+.toolbar {
+  position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line); padding-block: 10px;
+}
+.toolbar .wrap { display: grid; gap: 10px; }
+.search {
+  width: 100%; padding: 11px 14px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); outline-offset: 2px;
+}
+.chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); cursor: pointer; white-space: nowrap;
+}
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: .92rem; color: var(--muted); }
+.controls label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; color: var(--ink); }
+.controls select { padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); }
+.counts { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* Grid */
+main { padding-block: 16px 40px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); }
+@media (min-width: 720px) { .grid { gap: 18px; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); } }
+.card {
+  display: flex; flex-direction: column; text-decoration: none; color: inherit; background: var(--surface);
+  border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow);
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.card:hover { transform: translateY(-2px); }
+.card:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.ph { position: relative; aspect-ratio: 4 / 5; background: var(--line); overflow: hidden; }
+.ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.nophoto {
+  position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: .85rem;
+  background: repeating-linear-gradient(135deg, transparent 0 10px, color-mix(in srgb, var(--muted) 9%, transparent) 10px 20px);
+}
+.tag {
+  position: absolute; left: 8px; top: 8px; padding: 2px 8px; border-radius: 999px; font-size: .78rem; font-weight: 700;
+  background: rgba(20,19,17,.72); color: #fff; font-variant-numeric: tabular-nums;
+}
+.badge {
+  display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .78rem; font-weight: 700; letter-spacing: .02em;
+}
+.badge.Available { background: var(--accent-soft); color: var(--accent); }
+.badge.Reserved { background: var(--reserved-soft); color: var(--reserved); }
+.badge.Sold { background: var(--sold-soft); color: var(--sold); }
+.ph .badge { position: absolute; right: 8px; top: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+.card[data-status="Sold"] .ph img { filter: grayscale(1); opacity: .5; }
+.card[data-status="Sold"] .info { color: var(--muted); }
+.card[data-status="Sold"] .price { text-decoration: line-through; }
+.info { padding: 10px 12px 12px; display: grid; gap: 2px; }
+.info .t { font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.price { font-weight: 700; font-variant-numeric: tabular-nums; }
+.skeleton { border-radius: var(--radius); aspect-ratio: 3 / 4; background: linear-gradient(100deg, var(--line) 30%, var(--surface) 50%, var(--line) 70%); background-size: 300% 100%; animation: sh 1.4s infinite; }
+@keyframes sh { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.empty { text-align: center; color: var(--muted); padding: 48px 0; }
+.empty button, .btn {
+  padding: 12px 18px; border-radius: 10px; border: 0; background: var(--accent); color: var(--accent-ink);
+  font-weight: 700; cursor: pointer;
+}
+.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.btn[disabled] { opacity: .6; cursor: progress; }
+footer { color: var(--muted); font-size: .85rem; padding-block: 0 32px; }
+
+/* Item dialog */
+dialog {
+  border: 0; padding: 0; background: var(--surface); color: var(--ink);
+  width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0;
+}
+dialog::backdrop { background: rgba(15,14,12,.55); }
+.sheet { display: grid; min-height: 100%; align-content: start; }
+.close {
+  position: fixed; right: 12px; top: 12px; z-index: 3; width: 40px; height: 40px; border-radius: 50%; border: 0;
+  background: rgba(20,19,17,.72); color: #fff; font-size: 22px; line-height: 1; cursor: pointer;
+}
+.gallery { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; background: var(--line); scrollbar-width: none; }
+.gallery::-webkit-scrollbar { display: none; }
+.gallery > * { flex: none; width: 100%; aspect-ratio: 1 / 1; max-height: 62dvh; scroll-snap-align: center; position: relative; }
+.gallery img { width: 100%; height: 100%; object-fit: contain; display: block; background: #111; }
+.thumbs { display: flex; gap: 6px; padding: 8px 12px 0; overflow-x: auto; }
+.thumbs button { position: relative; flex: none; width: 56px; height: 56px; padding: 0; border: 2px solid transparent; border-radius: 8px; overflow: hidden; cursor: pointer; background: var(--line); }
+.thumbs button[aria-current="true"] { border-color: var(--accent); }
+.thumbs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.body { padding: 16px 16px 28px; display: grid; gap: 14px; align-content: start; }
+.body h2 { margin: 0; font: 700 1.5rem/1.2 "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; text-wrap: balance; }
+.headline { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.headline .price { font-size: 1.35rem; }
+.itemno { color: var(--muted); font-variant-numeric: tabular-nums; }
+.facts { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: .95rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+.details { margin: 0; white-space: pre-line; }
+.panel { border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 10px; background: var(--bg); }
+.panel h3 { margin: 0; font-size: 1.05rem; }
+.panel p { margin: 0; }
+.panel .small { color: var(--muted); font-size: .88rem; }
+.field { display: grid; gap: 4px; }
+.field span { font-size: .88rem; font-weight: 600; }
+.field input, .field textarea {
+  width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface);
+}
+.field textarea { resize: vertical; min-height: 44px; }
+.trap { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.msg { padding: 9px 12px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); font-weight: 600; }
+.ok { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.ok h3, .ok p { color: inherit; }
+.ok .small { color: inherit; opacity: .85; }
+@media (min-width: 860px) {
+  dialog { width: min(960px, 94vw); max-width: 94vw; height: fit-content; max-height: 92dvh; margin: auto; border-radius: 18px; }
+  .sheet { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); min-height: 0; }
+  .close { position: absolute; }
+  .body { padding: 24px 24px 28px; max-height: 92dvh; overflow-y: auto; }
+  .media { align-self: start; padding-bottom: 12px; }
+  .gallery > * { max-height: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+
+<header class="top wrap">
+  <h1 id="saleTitle">Garage sale</h1>
+  <p id="intro"></p>
+  <p id="pickup" class="pickup"></p>
+  <div id="demoNote" class="notice demo" hidden></div>
+  <div id="openNote" class="notice" hidden></div>
+</header>
+
+<div class="toolbar">
+  <div class="wrap">
+    <input id="q" class="search" type="search" placeholder="Search items" aria-label="Search items" autocomplete="off">
+    <div id="chips" class="chips" role="group" aria-label="Filter by category"></div>
+    <div class="controls">
+      <label><input id="hideSold" type="checkbox"> Hide sold</label>
+      <label>Sort
+        <select id="sort">
+          <option value="default">Available first</option>
+          <option value="id">Item number</option>
+          <option value="low">Price: low to high</option>
+          <option value="high">Price: high to low</option>
+        </select>
+      </label>
+      <span id="counts" class="counts" aria-live="polite"></span>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+  <div id="grid" class="grid" aria-busy="true"></div>
+  <div id="empty" class="empty" hidden></div>
+</main>
+
+<footer class="wrap"><span id="updated"></span></footer>
+
+<dialog id="dlg" aria-labelledby="dlgTitle">
+  <button class="close" id="dlgClose" type="button" aria-label="Close">&times;</button>
+  <div class="sheet">
+    <div class="media" id="dlgMedia"></div>
+    <div class="body" id="dlgBody"></div>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ */
+/* Small helpers                                                       */
+/* ------------------------------------------------------------------ */
+const $ = (id) => document.getElementById(id);
+
+/** el('div', {class:'x', onclick: fn}, child, 'text') : builds DOM without innerHTML. */
+function el(tag, attrs, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (k === "class") node.className = v;
+    else if (k in node && k !== "list" && k !== "form") node[k] = v;
+    else node.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    node.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return node;
+}
+
+const fmtWhen = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const fmtDay = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" });
+const fmtTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+const byId = (a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+
+function priceText(item) {
+  const p = item.price;
+  if (p === null || p === undefined || p === "") return "Ask for price";
+  if (typeof p !== "number") return String(p);
+  if (p === 0) return "Free";
+  const cur = state.settings.currency ? state.settings.currency + " " : "";
+  return cur + p.toLocaleString("en");
+}
+
+function photoUrl(name, thumb) {
+  if (/^(https?:|data:)/i.test(name)) return name;
+  return (thumb ? CONFIG.THUMB_DIR : CONFIG.PHOTO_DIR) + encodeURIComponent(name);
+}
+
+/** <img> that falls back from the thumbnail to the full photo, then to a placeholder. */
+function photo(name, alt, thumb) {
+  const img = el("img", { alt, loading: "lazy", decoding: "async", src: photoUrl(name, thumb) });
+  img.addEventListener("error", () => {
+    if (thumb && !img.dataset.retried) { img.dataset.retried = "1"; img.src = photoUrl(name, false); }
+    else img.replaceWith(el("div", { class: "nophoto" }, "Photo coming soon"));
+  });
+  return img;
+}
+
+function validContact(c) {
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(c)) return true;
+  if (!/^[0-9+()\-.\s]+$/.test(c)) return false;
+  const digits = c.replace(/\D/g, "");
+  return digits.length >= 7 && digits.length <= 15;
+}
+
+/* ------------------------------------------------------------------ */
+/* Data sources: the live Google Sheet, or built-in demo data          */
+/* ------------------------------------------------------------------ */
+function liveApi(url) {
+  const post = async (payload) => {
+    // text/plain keeps this a "simple" request, which Apps Script web apps accept cross-site.
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  };
+  return {
+    demo: false,
+    async list() {
+      const res = await fetch(url + (url.includes("?") ? "&" : "?") + "action=items&t=" + Date.now());
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "bad response");
+      return data;
+    },
+    reserve: (p) => post({ action: "reserve", ...p }),
+    waitlist: (p) => post({ action: "waitlist", ...p })
+  };
+}
+
+function localApi(preview) {
+  const pic = (label, hue) => "data:image/svg+xml;utf8," + encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 600'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>` +
+    `<stop offset='0' stop-color='hsl(${hue} 42% 80%)'/><stop offset='1' stop-color='hsl(${hue + 35} 38% 60%)'/></linearGradient></defs>` +
+    `<rect width='600' height='600' fill='url(#g)'/><text x='300' y='318' text-anchor='middle' font-family='Georgia,serif' font-size='46' fill='rgba(0,0,0,.5)'>${label}</text></svg>`);
+  const items = [
+    { id: "01", title: "Grey 3-seat sofa", category: "Furniture", price: 800, condition: "Good", details: "IKEA Kivik, 210 x 90 x 85 cm. Washable covers.\nSmall mark on the left armrest, see photo 2.", photos: [pic("Sofa", 30), pic("Sofa, armrest", 20), pic("Sofa, side", 40)], pickupFrom: null, status: "Available", waiting: 0 },
+    { id: "02", title: "Samsung 55-inch TV", category: "Electronics", price: 900, condition: "Like new", details: "2022 model. Wall mount and remote included.", photos: [pic("TV", 210)], pickupFrom: null, status: "Reserved", waiting: 1 },
+    { id: "03", title: "Double bed with mattress", category: "Furniture", price: 600, condition: "Good", details: "160 x 200 cm frame, mattress two years old.\nReserve now, collect from the pickup date.", photos: [pic("Bed", 260), pic("Bed, frame", 280)], pickupFrom: "2099-10-30", status: "Available", waiting: 0 },
+    { id: "04", title: "Kids bike, 16 inch", category: "Kids", price: 150, condition: "Good", details: "Fits roughly age 4 to 6. Training wheels included.", photos: [pic("Bike", 340)], pickupFrom: null, status: "Sold", waiting: 0 },
+    { id: "05", title: "Kitchen bundle: pots, pans, utensils", category: "Kitchen", price: 200, condition: "Good", details: "Everything in the photo, sold as one lot.", photos: [pic("Kitchen", 90)], pickupFrom: null, status: "Available", waiting: 0 },
+    { id: "06", title: "Standing desk, 140 cm", category: "Furniture", price: 450, condition: "Like new", details: "Electric, two motors, memory presets. White top.", photos: [pic("Desk", 170)], pickupFrom: null, status: "Available", waiting: 0 },
+    { id: "07", title: "Garden chairs, set of 4", category: "Outdoor", price: 120, condition: "Fair", details: "Some sun fading. Stackable.", photos: [], pickupFrom: null, status: "Available", waiting: 0 },
+    { id: "08", title: "Box of children's books", category: "Kids", price: 0, condition: "Good", details: "About 30 picture books, English and German.", photos: [pic("Books", 55)], pickupFrom: null, status: "Available", waiting: 0 }
+  ];
+  const settings = {
+    title: "Garage sale",
+    intro: "Tap an item to see details and reserve it. First come, first served.",
+    pickupInfo: "Pickup evenings and Saturday morning. Address by message after you reserve.",
+    currency: "SAR", holdHours: 48, opensAt: null
+  };
+  if (preview && Array.isArray(preview.items)) {
+    items.length = 0;
+    items.push(...JSON.parse(JSON.stringify(preview.items)));
+    Object.assign(settings, preview.settings || {});
+  }
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const find = (id) => items.find((i) => i.id === id);
+  return {
+    demo: true,
+    preview: !!preview,
+    async list() { await wait(350); return { ok: true, settings, items: JSON.parse(JSON.stringify(items)), serverTime: new Date().toISOString() }; },
+    async reserve(p) {
+      await wait(500);
+      const it = find(p.id);
+      if (!it) return { ok: false, error: "not_found" };
+      if (it.status !== "Available") return { ok: false, error: "taken", status: it.status };
+      it.status = "Reserved";
+      return { ok: true, id: it.id, holdUntil: new Date(Date.now() + settings.holdHours * 3600e3).toISOString(), sellerContact: "" };
+    },
+    async waitlist(p) {
+      await wait(500);
+      const it = find(p.id);
+      if (!it || it.status !== "Reserved") return { ok: false, error: "available" };
+      it.waiting += 1;
+      return { ok: true, position: it.waiting };
+    }
+  };
+}
+
+const api = CONFIG.API_URL ? liveApi(CONFIG.API_URL) : localApi(window.SALE_PREVIEW || null);
+
+/* ------------------------------------------------------------------ */
+/* State                                                               */
+/* ------------------------------------------------------------------ */
+const state = {
+  items: [], settings: { title: "Garage sale", intro: "", pickupInfo: "", currency: "", holdHours: 48, opensAt: null },
+  loaded: false, failed: false, updatedAt: null,
+  cat: "All", q: "", hideSold: false, sort: "default",
+  openId: null,
+  mine: new Map(),      // items this visitor reserved in this visit: id -> { holdUntil, sellerContact }
+  waiting: new Map(),   // waitlists this visitor joined: id -> position
+  draft: { name: "", contact: "", note: "" },
+  busy: false, error: "",
+  skew: 0               // server clock minus this device's clock, in ms
+};
+let gridSig = "", panelSig = "", openTimer = 0;
+
+const now = () => Date.now() + state.skew;
+const isOpen = () => !state.settings.opensAt || now() >= new Date(state.settings.opensAt).getTime();
+const itemById = (id) => state.items.find((i) => String(i.id) === String(id));
+
+/* ------------------------------------------------------------------ */
+/* Loading and refreshing                                              */
+/* ------------------------------------------------------------------ */
+async function load() {
+  try {
+    const data = await api.list();
+    state.items = data.items || [];
+    state.settings = Object.assign(state.settings, data.settings || {});
+    if (data.serverTime) state.skew = new Date(data.serverTime).getTime() - Date.now();
+    state.loaded = true; state.failed = false; state.updatedAt = new Date();
+    // A reservation made in this visit may have been released by the seller or expired meanwhile.
+    for (const id of [...state.mine.keys()]) {
+      const it = itemById(id);
+      if (!it || it.status === "Available") state.mine.delete(id);
+    }
+    for (const id of [...state.waiting.keys()]) {
+      const it = itemById(id);
+      if (!it || it.status !== "Reserved") state.waiting.delete(id);
+    }
+  } catch (err) {
+    state.failed = true;
+  }
+  render();
+  if (!state.openId) openFromHash();
+}
+
+function render() {
+  renderHeader();
+  renderChips();
+  renderGrid();
+  renderPanel();
+  $("updated").textContent = state.updatedAt
+    ? "Updated " + fmtTime.format(state.updatedAt) + (state.failed ? ". Could not refresh just now, retrying." : ". Availability refreshes by itself.")
+    : "";
+}
+
+function renderHeader() {
+  const s = state.settings;
+  document.title = s.title || "Garage sale";
+  $("saleTitle").textContent = s.title || "Garage sale";
+  $("intro").textContent = s.intro || "";
+  $("intro").hidden = !s.intro;
+  $("pickup").textContent = s.pickupInfo || "";
+  $("pickup").hidden = !s.pickupInfo;
+  $("demoNote").hidden = !api.demo;
+  $("demoNote").textContent = api.preview
+    ? "Preview: this page is not connected to the reservation sheet yet. Reservations made here are not saved."
+    : "Demo mode: placeholder items. Reservations made here are not saved.";
+  const note = $("openNote");
+  if (!isOpen()) {
+    const at = new Date(s.opensAt);
+    note.textContent = "Preview only. Reservations open " + fmtWhen.format(at) + " (your local time).";
+    note.hidden = false;
+    clearTimeout(openTimer);
+    const ms = at.getTime() - now();
+    if (ms < 2 ** 31 - 1) openTimer = setTimeout(render, ms + 500);
+  } else {
+    note.hidden = true;
+  }
+}
+
+function categories() {
+  const seen = new Map();
+  for (const it of state.items) if (it.category) seen.set(it.category, (seen.get(it.category) || 0) + 1);
+  return [...seen.keys()];   // in the order they first appear in the sheet
+}
+
+function renderChips() {
+  const cats = ["All", ...categories()];
+  if (state.mine.size) cats.push("Yours");
+  if (!cats.includes(state.cat)) state.cat = "All";
+  const box = $("chips");
+  box.replaceChildren(...cats.map((c) => el("button", {
+    class: "chip", type: "button", "aria-pressed": String(state.cat === c),
+    onclick: () => { state.cat = c; render(); }
+  }, c === "Yours" ? "Your reservations (" + state.mine.size + ")" : c)));
+}
+
+function visibleItems() {
+  const q = state.q.trim().toLowerCase();
+  const rank = { Available: 0, Reserved: 1, Sold: 2 };
+  const priceNum = (i) => (typeof i.price === "number" ? i.price : Number.POSITIVE_INFINITY);
+  const list = state.items.filter((i) => {
+    if (state.cat === "Yours") return state.mine.has(String(i.id));
+    if (state.cat !== "All" && i.category !== state.cat) return false;
+    if (state.hideSold && i.status === "Sold") return false;
+    if (q && !(i.title + " " + i.details + " " + i.category + " #" + i.id).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const sorters = {
+    default: (a, b) => (rank[a.status] - rank[b.status]) || byId(a, b),
+    id: byId,
+    low: (a, b) => (priceNum(a) - priceNum(b)) || byId(a, b),
+    high: (a, b) => {
+      const pa = typeof a.price === "number" ? a.price : -1, pb = typeof b.price === "number" ? b.price : -1;
+      return (pb - pa) || byId(a, b);
+    }
+  };
+  return list.sort(sorters[state.sort] || sorters.default);
+}
+
+function renderGrid() {
+  const grid = $("grid"), empty = $("empty");
+  if (!state.loaded) {
+    if (state.failed) {
+      grid.replaceChildren();
+      empty.hidden = false;
+      empty.replaceChildren(el("p", null, "The item list could not be loaded."),
+        el("button", { type: "button", onclick: () => { state.failed = false; render(); load(); } }, "Try again"));
+    } else {
+      empty.hidden = true;
+      if (!grid.children.length) grid.replaceChildren(...Array.from({ length: 8 }, () => el("div", { class: "skeleton" })));
+    }
+    gridSig = "";
+    return;
+  }
+  grid.setAttribute("aria-busy", "false");
+  const list = visibleItems();
+  const count = (s) => state.items.filter((i) => i.status === s).length;
+  $("counts").textContent = count("Available") + " available · " + count("Reserved") + " reserved · " + count("Sold") + " sold";
+
+  const sig = JSON.stringify(list.map((i) => [i.id, i.status, i.title, i.price, (i.photos || [])[0], state.mine.has(String(i.id))])) + state.settings.currency;
+  if (sig === gridSig) return;   // nothing visible changed: keep the DOM (and loaded images) as they are
+  gridSig = sig;
+
+  empty.hidden = list.length > 0;
+  if (!list.length) empty.replaceChildren(el("p", null, state.items.length ? "No items match." : "No items yet. Check back soon."));
+  grid.replaceChildren(...list.map(card));
+}
+
+function card(item) {
+  const mine = state.mine.has(String(item.id));
+  const first = (item.photos || [])[0];
+  return el("a", {
+    class: "card", href: "#item-" + encodeURIComponent(item.id), "data-status": item.status,
+    onclick: (e) => { e.preventDefault(); openItem(item.id, true); }
+  },
+    el("div", { class: "ph" },
+      first ? photo(first, item.title, true) : el("div", { class: "nophoto" }, "Photo coming soon"),
+      el("span", { class: "tag" }, "#" + item.id),
+      item.status !== "Available" && el("span", { class: "badge " + item.status }, mine ? "Yours" : item.status)),
+    el("div", { class: "info" },
+      el("div", { class: "t" }, item.title),
+      el("div", { class: "price" }, priceText(item))));
+}
+
+/* ------------------------------------------------------------------ */
+/* Item dialog                                                         */
+/* ------------------------------------------------------------------ */
+function openItem(id, pushHistory) {
+  const item = itemById(id);
+  if (!item) return;
+  state.openId = String(item.id);
+  state.error = ""; state.busy = false; panelSig = "";
+  if (pushHistory) {
+    try { history.pushState({ item: state.openId }, "", "#item-" + encodeURIComponent(state.openId)); } catch (err) { /* sandboxed preview */ }
+  }
+  renderMedia(item);
+  renderBody(item);
+  const dlg = $("dlg");
+  if (!dlg.open) { if (dlg.showModal) dlg.showModal(); else dlg.setAttribute("open", ""); }
+  dlg.scrollTop = 0;
+  $("dlgBody").scrollTop = 0;
+}
+
+function closeItem(fromHistory) {
+  const dlg = $("dlg");
+  state.openId = null;
+  if (dlg.open) { if (dlg.close) dlg.close(); else dlg.removeAttribute("open"); }
+  if (fromHistory) return;
+  try {
+    if (history.state && history.state.item) history.back();
+    else if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+  } catch (err) { /* sandboxed preview */ }
+}
+
+function openFromHash() {
+  const m = /^#item-(.+)$/.exec(location.hash || "");
+  if (m && state.loaded) openItem(decodeURIComponent(m[1]), false);
+}
+
+function renderMedia(item) {
+  const photos = item.photos || [];
+  const box = $("dlgMedia");
+  if (!photos.length) {
+    box.replaceChildren(el("div", { class: "gallery" }, el("div", null, el("div", { class: "nophoto" }, "Photo coming soon"))));
+    return;
+  }
+  const slides = photos.map((p, i) => el("div", null, photo(p, item.title + ", photo " + (i + 1), false)));
+  const gallery = el("div", { class: "gallery", tabIndex: 0, "aria-label": "Photos" }, slides);
+  let thumbs = null;
+  if (photos.length > 1) {
+    const buttons = photos.map((p, i) => el("button", {
+      type: "button", "aria-label": "Photo " + (i + 1), "aria-current": String(i === 0),
+      onclick: () => gallery.scrollTo({ left: i * gallery.clientWidth, behavior: "smooth" })
+    }, photo(p, "", true)));
+    thumbs = el("div", { class: "thumbs" }, buttons);
+    gallery.addEventListener("scroll", () => {
+      const at = Math.round(gallery.scrollLeft / Math.max(gallery.clientWidth, 1));
+      buttons.forEach((b, i) => b.setAttribute("aria-current", String(i === at)));
+    }, { passive: true });
+  }
+  box.replaceChildren(gallery, thumbs || "");
+}
+
+function renderBody(item) {
+  const facts = [];
+  if (item.condition) facts.push(el("dt", null, "Condition"), el("dd", null, item.condition));
+  if (item.category) facts.push(el("dt", null, "Category"), el("dd", null, item.category));
+  if (item.pickupFrom) {
+    const d = new Date(item.pickupFrom + "T00:00:00");
+    if (!isNaN(d) && d.getTime() > Date.now()) facts.push(el("dt", null, "Pickup"), el("dd", null, "from " + fmtDay.format(d)));
+  }
+  $("dlgBody").replaceChildren(
+    el("div", { class: "itemno" }, "Item #" + item.id),
+    el("h2", { id: "dlgTitle" }, item.title),
+    el("div", { class: "headline", id: "dlgHeadline" }),
+    facts.length ? el("dl", { class: "facts" }, facts) : "",
+    item.details ? el("p", { class: "details" }, item.details) : "",
+    el("div", { id: "dlgPanel" })
+  );
+  renderPanel();
+}
+
+/** The reserve / waitlist / status box. Rebuilt only when its situation changes, so typing is never interrupted. */
+function renderPanel() {
+  if (!state.openId) return;
+  const item = itemById(state.openId);
+  const host = $("dlgPanel");
+  if (!host) return;
+  if (!item) {   // removed from the sheet while the dialog was open
+    host.replaceChildren(el("div", { class: "panel" }, el("p", null, "This item is no longer listed.")));
+    return;
+  }
+  const id = String(item.id);
+  const mine = state.mine.get(id);
+  const queued = state.waiting.get(id);
+  const sig = [id, item.status, !!mine, queued || 0, isOpen(), state.busy, state.error, item.waiting || 0, priceText(item)].join("|");
+  if (sig === panelSig) return;
+  panelSig = sig;
+
+  $("dlgHeadline").replaceChildren(
+    el("span", { class: "price" }, priceText(item)),
+    el("span", { class: "badge " + item.status }, mine ? "Reserved for you" : item.status));
+
+  const hours = state.settings.holdHours;
+  const fields = (withNote) => [
+    el("label", { class: "field" }, el("span", null, "Your name"),
+      el("input", { name: "name", autocomplete: "name", required: true, maxLength: 60, value: state.draft.name, oninput: (e) => { state.draft.name = e.target.value; } })),
+    el("label", { class: "field" }, el("span", null, "WhatsApp number with country code, or email"),
+      el("input", { name: "contact", autocomplete: "tel", required: true, maxLength: 80, placeholder: "+966 5x xxx xxxx", value: state.draft.contact, oninput: (e) => { state.draft.contact = e.target.value; } })),
+    withNote && el("label", { class: "field" }, el("span", null, "Note for the seller (optional)"),
+      el("textarea", { name: "note", rows: 2, maxLength: 300, value: state.draft.note, oninput: (e) => { state.draft.note = e.target.value; } })),
+    el("label", { class: "trap", "aria-hidden": "true" }, "Website", el("input", { name: "website", tabIndex: -1, autocomplete: "off" })),
+    state.error && el("div", { class: "msg", role: "alert" }, state.error)
+  ];
+  let panel;
+
+  if (mine) {
+    panel = el("div", { class: "panel ok" },
+      el("h3", null, "Reserved for you"),
+      el("p", null, mine.holdUntil
+        ? "Held until " + fmtWhen.format(new Date(mine.holdUntil)) + ". The seller will message you to arrange pickup."
+        : "The seller will message you to arrange pickup."),
+      mine.sellerContact && el("p", null, "Seller: " + mine.sellerContact),
+      el("p", { class: "small" }, "Changed your mind? Tell the seller so the next person can have it."),
+      el("div", null, el("button", { class: "btn", type: "button", onclick: () => closeItem(false) }, "Back to all items")));
+  } else if (item.status === "Sold") {
+    panel = el("div", { class: "panel" }, el("h3", null, "Sold"), el("p", { class: "small" }, "This one is gone."));
+  } else if (item.status === "Reserved" && queued) {
+    panel = el("div", { class: "panel ok" },
+      el("h3", null, "You are on the waitlist"),
+      el("p", null, queued === 1 ? "You are next in line. If the reservation falls through, the item is held for you and the seller will message you."
+        : "You are number " + queued + " in line. The seller will message you if it becomes free."));
+  } else if (item.status === "Reserved") {
+    panel = el("form", { class: "panel", novalidate: true, onsubmit: (e) => submit(e, "waitlist") },
+      el("h3", null, "Reserved by someone else"),
+      el("p", { class: "small" }, (item.waiting ? item.waiting + (item.waiting === 1 ? " person is" : " people are") + " already waiting. " : "") +
+        "Join the waitlist and you get it if the reservation falls through."),
+      fields(false),
+      el("button", { class: "btn", type: "submit", disabled: state.busy }, state.busy ? "Adding you…" : "Join the waitlist"));
+  } else if (!isOpen()) {
+    panel = el("div", { class: "panel" },
+      el("h3", null, "Not open yet"),
+      el("p", null, "Reservations open " + fmtWhen.format(new Date(state.settings.opensAt)) + " (your local time)."));
+  } else {
+    panel = el("form", { class: "panel", novalidate: true, onsubmit: (e) => submit(e, "reserve") },
+      el("h3", null, "Reserve this item"),
+      fields(true),
+      el("button", { class: "btn", type: "submit", disabled: state.busy }, state.busy ? "Reserving…" : "Reserve"),
+      el("p", { class: "small" }, (hours > 0 ? "Held for you for " + hours + " hours. " : "") +
+        "The seller will message you to arrange pickup. Only the seller sees your details."));
+  }
+  host.replaceChildren(panel);
+}
+
+const ERRORS = {
+  invalid: "Please enter your name and a WhatsApp number with country code, or an email address.",
+  busy: "That did not go through. Please try again.",
+  network: "That did not go through. Check your connection and try again.",
+  not_found: "This item is no longer listed.",
+  full: "The waitlist for this item is full.",
+  holder: "You are the one holding this item."
+};
+
+async function submit(e, kind) {
+  e.preventDefault();
+  if (state.busy) return;
+  const form = e.target;
+  const id = state.openId;
+  const payload = {
+    id,
+    name: state.draft.name.trim(),
+    contact: state.draft.contact.trim(),
+    note: kind === "reserve" ? state.draft.note.trim() : "",
+    website: form.elements.website ? form.elements.website.value : ""
+  };
+  if (payload.name.length < 2 || !validContact(payload.contact)) {
+    state.error = ERRORS.invalid; renderPanel();
+    return;
+  }
+  state.busy = true; state.error = ""; renderPanel();
+  let res;
+  try { res = await (kind === "reserve" ? api.reserve(payload) : api.waitlist(payload)); }
+  catch (err) { res = { ok: false, error: "network" }; }
+  state.busy = false;
+  const item = itemById(id);
+
+  if (res.ok && kind === "reserve") {
+    state.mine.set(id, { holdUntil: res.holdUntil || null, sellerContact: res.sellerContact || "" });
+    if (item) item.status = "Reserved";
+    state.draft.note = "";
+  } else if (res.ok) {
+    state.waiting.set(id, res.position || 1);
+  } else if (res.error === "taken") {
+    if (item) item.status = res.status === "Sold" ? "Sold" : "Reserved";
+    state.error = res.status === "Sold" ? "" : "Someone reserved this a moment before you. You can join the waitlist instead.";
+  } else if (res.error === "available") {
+    if (item) item.status = "Available";
+    state.error = "Good news: this item just became free. You can reserve it now.";
+  } else if (res.error === "limit") {
+    state.error = "You already hold " + res.max + " items. Arrange pickup for those first, or message the seller.";
+  } else if (res.error === "not_open") {
+    if (res.opensAt) state.settings.opensAt = res.opensAt;
+    state.error = res.opensAt ? "Reservations open " + fmtWhen.format(new Date(res.opensAt)) + "." : "Reservations are not open yet.";
+  } else {
+    state.error = ERRORS[res.error] || ERRORS.busy;
+  }
+  render();
+  load();   // pick up everything else that changed meanwhile
+}
+
+/* ------------------------------------------------------------------ */
+/* Wiring                                                              */
+/* ------------------------------------------------------------------ */
+$("q").addEventListener("input", (e) => { state.q = e.target.value; renderGrid(); });
+$("hideSold").addEventListener("change", (e) => { state.hideSold = e.target.checked; renderGrid(); });
+$("sort").addEventListener("change", (e) => { state.sort = e.target.value; renderGrid(); });
+$("dlgClose").addEventListener("click", () => closeItem(false));
+$("dlg").addEventListener("cancel", (e) => { e.preventDefault(); closeItem(false); });          // Esc key
+$("dlg").addEventListener("click", (e) => { if (e.target === $("dlg")) closeItem(false); });   // click on the backdrop
+window.addEventListener("popstate", () => {
+  const m = /^#item-(.+)$/.exec(location.hash || "");
+  if (m) openItem(decodeURIComponent(m[1]), false); else closeItem(true);
+});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+setInterval(() => { if (!document.hidden && !state.busy) load(); }, Math.max(CONFIG.POLL_SECONDS, 15) * 1000);
+
+render();
+load();
+</script>
+</body>
+</html>

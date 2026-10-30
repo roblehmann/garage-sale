@@ -130,6 +130,18 @@ main { padding-block: 16px 40px; }
   font-weight: 700; cursor: pointer;
 }
 .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.wa {
+  display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px;
+  border: 1px solid var(--accent); color: var(--accent); background: transparent;
+  font-weight: 700; text-decoration: none; justify-self: start;
+}
+.wa:hover { background: var(--accent-soft); }
+.wa:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.wa svg { width: 18px; height: 18px; flex: none; }
+.askrow { display: grid; gap: 4px; }
+.askrow .small { color: var(--muted); font-size: .85rem; margin: 0; }
+.top .walink { color: var(--accent); font-weight: 600; text-decoration: none; }
+.top .walink:hover { text-decoration: underline; }
 .btn[disabled] { opacity: .6; cursor: progress; }
 footer { color: var(--muted); font-size: .85rem; padding-block: 0 32px; }
 
@@ -193,6 +205,7 @@ dialog::backdrop { background: rgba(15,14,12,.55); }
   <h1 id="saleTitle">Garage sale</h1>
   <p id="intro"></p>
   <p id="pickup" class="pickup"></p>
+  <p id="waTop" class="pickup" hidden></p>
   <div id="demoNote" class="notice demo" hidden></div>
   <div id="openNote" class="notice" hidden></div>
 </header>
@@ -372,7 +385,7 @@ const api = CONFIG.API_URL ? liveApi(CONFIG.API_URL) : localApi(window.SALE_PREV
 /* State                                                               */
 /* ------------------------------------------------------------------ */
 const state = {
-  items: [], settings: { title: "Garage sale", intro: "", pickupInfo: "", currency: "", holdHours: 48, opensAt: null },
+  items: [], settings: { title: "Garage sale", intro: "", pickupInfo: "", currency: "", holdHours: 48, opensAt: null, whatsapp: "" },
   loaded: false, failed: false, updatedAt: null,
   cat: "All", q: "", hideSold: false, sort: "default",
   openId: null,
@@ -424,6 +437,33 @@ function render() {
     : "";
 }
 
+/* ------------------------------------------------------------------ */
+/* WhatsApp                                                            */
+/* ------------------------------------------------------------------ */
+const waNumber = () => String(state.settings.whatsapp || "").replace(/\D/g, "");
+const waHref = (text) => "https://wa.me/" + waNumber() + "?text=" + encodeURIComponent(text);
+const pageUrl = () => location.href.split("#")[0];
+
+function waIcon() {   // a plain chat bubble
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z");
+  path.setAttribute("fill", "none"); path.setAttribute("stroke", "currentColor"); path.setAttribute("stroke-width", "2"); path.setAttribute("stroke-linejoin", "round");
+  svg.append(path);
+  return svg;
+}
+
+function itemMessage(item) {
+  const what = "#" + item.id + " " + item.title + (priceText(item) ? " (" + priceText(item) + ")" : "");
+  const link = pageUrl() + "#item-" + encodeURIComponent(item.id);
+  if (state.mine.has(String(item.id))) return "Hi! I just reserved " + what + " from your garage sale. When can I pick it up?\n" + link;
+  return item.status === "Reserved"
+    ? "Hi! About " + what + " from your garage sale: it shows as reserved. Could you let me know if it becomes free?\n" + link
+    : "Hi! I'm interested in " + what + " from your garage sale. Is it still available?\n" + link;
+}
+
 function renderHeader() {
   const s = state.settings;
   document.title = s.title || "Garage sale";
@@ -432,6 +472,16 @@ function renderHeader() {
   $("intro").hidden = !s.intro;
   $("pickup").textContent = s.pickupInfo || "";
   $("pickup").hidden = !s.pickupInfo;
+  const top = $("waTop");
+  if (waNumber()) {
+    top.replaceChildren("Questions? ", el("a", {
+      class: "walink", href: waHref("Hi! I have a question about your garage sale: " + pageUrl()),
+      target: "_blank", rel: "noopener"
+    }, "Message me on WhatsApp"));
+    top.hidden = false;
+  } else {
+    top.hidden = true;
+  }
   $("demoNote").hidden = !api.demo;
   $("demoNote").textContent = api.preview
     ? "Preview: this page is not connected to the reservation sheet yet. Reservations made here are not saved."
@@ -607,6 +657,7 @@ function renderBody(item) {
     el("div", { class: "headline", id: "dlgHeadline" }),
     facts.length ? el("dl", { class: "facts" }, facts) : "",
     item.details ? el("p", { class: "details" }, item.details) : "",
+    el("div", { id: "dlgWa" }),
     el("div", { id: "dlgPanel" })
   );
   renderPanel();
@@ -620,14 +671,24 @@ function renderPanel() {
   if (!host) return;
   if (!item) {   // removed from the sheet while the dialog was open
     host.replaceChildren(el("div", { class: "panel" }, el("p", null, "This item is no longer listed.")));
+    if ($("dlgWa")) $("dlgWa").replaceChildren();
     return;
   }
   const id = String(item.id);
   const mine = state.mine.get(id);
   const queued = state.waiting.get(id);
-  const sig = [id, item.status, !!mine, queued || 0, isOpen(), state.busy, state.error, item.waiting || 0, priceText(item)].join("|");
+  const sig = [id, item.status, !!mine, queued || 0, isOpen(), state.busy, state.error, item.waiting || 0, priceText(item), waNumber(), item.title].join("|");
   if (sig === panelSig) return;
   panelSig = sig;
+
+  const waSlot = $("dlgWa");
+  if (waSlot) {
+    waSlot.replaceChildren(waNumber() && item.status !== "Sold"
+      ? el("div", { class: "askrow" },
+          el("a", { class: "wa", href: waHref(itemMessage(item)), target: "_blank", rel: "noopener" }, waIcon(), "Ask on WhatsApp"),
+          el("p", { class: "small" }, mine ? "Arrange pickup with the seller on WhatsApp." : "Questions about this item? This opens WhatsApp with a message about it."))
+      : "");
+  }
 
   $("dlgHeadline").replaceChildren(
     el("span", { class: "price" }, priceText(item)),
